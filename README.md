@@ -1,27 +1,82 @@
-# bug-reproduction
+# Mastra OpenAPI Spec Bug Reproduction
 
-Welcome to your new [Mastra](https://mastra.ai/) project! We're excited to see what you'll build.
+Minimal reproduction for OpenAPI spec issues introduced in Mastra V1.
 
-## Getting Started
+## Issues
 
-Start the development server:
+1. `/openapi.json` returns 404 — spec is now only served at `/api/openapi.json`
+2. Paths in the spec no longer include the `/api/` prefix
+3. Custom routes are included under `servers: [{url: "/api"}]` despite not being served under `/api/`
 
-```shell
-npm run dev
+## Setup
+
+```bash
+npm install
 ```
 
-Open [http://localhost:4111](http://localhost:4111) in your browser to access [Mastra Studio](https://mastra.ai/docs/getting-started/studio). It provides an interactive UI for building and testing your agents, along with a REST API that exposes your Mastra application as a local service. This lets you start building without worrying about integration right away.
+## Reproduce
 
-You can start editing files inside the `src/mastra` directory. The development server will automatically reload whenever you make changes.
+```bash
+npx mastra dev
+```
 
-## Learn more
+Wait for the server to start, then run the following:
 
-To learn more about Mastra, visit our [documentation](https://mastra.ai/docs/). Your bootstrapped project includes example code for [agents](https://mastra.ai/docs/agents/overview), [tools](https://mastra.ai/docs/agents/using-tools), [workflows](https://mastra.ai/docs/workflows/overview), [scorers](https://mastra.ai/docs/evals/overview), and [observability](https://mastra.ai/docs/observability/overview).
+### 1. Old endpoint is gone
 
-If you're new to AI agents, check out our [course](https://mastra.ai/course) and [YouTube videos](https://youtube.com/@mastra-ai). You can also join our [Discord](https://discord.gg/BTYqqHKUrf) community to get help and share your projects.
+```bash
+curl -s http://localhost:4111/openapi.json
+# Expected: OpenAPI spec (pre-V1 behavior)
+# Actual: 404
+```
 
-## Deploy on Mastra Cloud
+### 2. Spec is now at /api/openapi.json
 
-[Mastra Cloud](https://cloud.mastra.ai/) gives you a serverless agent environment with atomic deployments. Access your agents from anywhere and monitor performance. Make sure they don't go off the rails with evals and tracing.
+```bash
+curl -s http://localhost:4111/api/openapi.json | jq '.servers'
+# Returns: [{"url": "/api"}]
+```
 
-Check out the [deployment guide](https://mastra.ai/docs/deployment/overview) for more details.
+### 3. Paths lack /api/ prefix
+
+```bash
+curl -s http://localhost:4111/api/openapi.json | jq '.paths | keys'
+# Returns paths like "/health", "/agents/{agentId}" — no /api/ prefix
+```
+
+### 4. Custom route is not served under /api/
+
+```bash
+curl -s http://localhost:4111/health
+# 200 OK — this is where the route actually lives
+
+curl -s http://localhost:4111/api/health
+# 404 — but the spec implies it should be here (servers.url + path = /api/health)
+```
+
+## Expected Behavior
+
+Either:
+
+- **Option A**: Restore `/api/` in paths and serve the spec at `/openapi.json` (matching pre-V1 behavior)
+- **Option B**: Use path-level `servers` overrides for custom routes so the spec is accurate:
+  ```json
+  {
+    "servers": [{"url": "/api"}],
+    "paths": {
+      "/agents/{agentId}": { ... },
+      "/health": {
+        "servers": [{"url": "/"}],
+        ...
+      }
+    }
+  }
+  ```
+- **Option C**: At minimum, don't include custom routes under a `servers` base URL they aren't served under
+
+## Environment
+
+- `mastra` CLI: 1.3.7
+- `@mastra/core`: 1.10.0 (resolved via deployer)
+- `@mastra/server`: 1.10.0 (via `@mastra/deployer`)
+- Node.js: v22.16.0
